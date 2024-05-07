@@ -20,6 +20,25 @@
 
 #include "SSLClient.h"
 
+#ifdef __arm__
+// should use uinstd.h to define sbrk but Due causes a conflict
+extern "C" char* sbrk(int incr);
+#else  // __ARM__
+extern char *__brkval;
+#endif  // __arm__
+ 
+/** Get the free memory availible in bytes (stack - heap) */
+static int freeMemory() {
+  char top;
+#ifdef __arm__
+  return &top - reinterpret_cast<char*>(sbrk(0));
+#elif defined(CORE_TEENSY) || (ARDUINO > 103 && ARDUINO != 151)
+  return &top - __brkval;
+#else  // __arm__
+  return __brkval ? &top - __brkval : &top - __malloc_heap_start;
+#endif  // __arm__
+}
+
 /* see SSLClient.h */
 SSLClient::SSLClient(   Client& client, 
                         const br_x509_trust_anchor *trust_anchors, 
@@ -75,7 +94,7 @@ int SSLClient::connect(const char *host, uint16_t port) {
     // connection check
     if (get_arduino_client().connected())
         m_warn("Arduino client is already connected? Continuing anyway...", func_name);
-    // reset indexs for saftey
+    // reset indexs for safety
     m_write_idx = 0;
     // first we need our hidden client member to negotiate the socket for us,
     // since most times socket functionality is implemented in hardeware.
@@ -86,6 +105,8 @@ int SSLClient::connect(const char *host, uint16_t port) {
     }
     m_info("Base client connected!", func_name);
     // start ssl!
+    m_info("Host: ", func_name);
+    m_info(host, func_name);
     return m_start_ssl(host, getSession(host));
 }
 
@@ -155,7 +176,10 @@ int SSLClient::available() {
     }
     else if (state == BR_SSL_CLOSED) m_info("Engine closed after update", func_name);
     // flush the buffer if it's stuck in the SENDAPP state
-    else if (state & BR_SSL_SENDAPP) br_ssl_engine_flush(&m_sslctx.eng, 0);
+    else if (state & BR_SSL_SENDAPP) {
+        m_info("Flushing buffer to receive data", func_name);
+        br_ssl_engine_flush(&m_sslctx.eng, 0);
+    }
     // other state, or client is closed
     return 0;
 }
@@ -262,10 +286,16 @@ uint8_t SSLClient::connected() {
 /* see SSLClient.h */
 SSLSession* SSLClient::getSession(const char* host) {
     const char* func_name = __func__;
+    m_info("Host: ", func_name);
+    m_info(host, func_name);
     // search for a matching session with the IP
     int temp_index = m_get_session_index(host);
     // if none are availible, use m_session_index
-    if (temp_index < 0) return nullptr;
+    if (temp_index < 0) {
+        m_info("No session found for host, using session index: ", func_name);
+        m_info(temp_index, func_name);
+        return nullptr;
+    }
     // return the pointed to value
     m_info("Using session index: ", func_name);
     m_info(temp_index, func_name);
@@ -280,6 +310,8 @@ void SSLClient::removeSession(const char* host) {
         m_info(" Deleted session ", func_name);
         m_info(temp_index, func_name);
         m_sessions.erase(m_sessions.begin() + static_cast<size_t>(temp_index));
+    } else {
+        m_warn("No session found to delete", func_name);
     }
 }
 
@@ -341,10 +373,16 @@ int SSLClient::m_start_ssl(const char* host, SSLSession* ssl_ses) {
     br_ssl_engine_inject_entropy(&m_sslctx.eng, rng_seeds, sizeof rng_seeds);
     // inject session parameters for faster reconnection, if we have any
     if(ssl_ses != nullptr) {
+        m_info("Checking hostname before overwriting session params: ", func_name);
+        m_info(ssl_ses->get_hostname().c_str(), func_name);
         br_ssl_engine_set_session_parameters(&m_sslctx.eng, ssl_ses->to_br_session());
         m_info("Set SSL session!", func_name);
+        m_info("Hostname after overwrite: ", func_name);
+        m_info(ssl_ses->get_hostname().c_str(), func_name);
     }
     // reset the engine, but make sure that it reset successfully
+    m_info("host: ", func_name);
+    m_info(host, func_name);
     int ret = br_ssl_client_reset(&m_sslctx, host, 1);
     if (!ret) {
         m_error("Reset of bearSSL failed (is bearssl setup properly?)", func_name);
@@ -364,14 +402,47 @@ int SSLClient::m_start_ssl(const char* host, SSLSession* ssl_ses) {
     m_is_connected = true;
     // all good to go! the SSL socket should be up and running
     // overwrite the session we got with new parameters
-    if (ssl_ses != nullptr)
+    if (ssl_ses != nullptr) {
+        m_info("Checking hostname: ", func_name);
+        m_info(ssl_ses->get_hostname().c_str(), func_name);
+        m_info("Overwrote session with new parameters (ssl_ses != nullptr)", func_name);
         br_ssl_engine_get_session_parameters(&m_sslctx.eng, ssl_ses->to_br_session());
+        m_info("Session overwritten!", func_name);
+        m_info("Host after overwrite: ", func_name);
+        m_info(ssl_ses->get_hostname().c_str(), func_name);
+    }
     else if (host != nullptr) {
-        if (m_sessions.size() >= m_max_sessions)
+        if (m_sessions.size() >= m_max_sessions) {
+            m_warn("Session limit reached, removing oldest session", func_name);
+            // remove the oldest session
+            if (!m_sessions.empty()) {
+                if (m_sessions[0].get_hostname().length() > 0) {
+                    m_info("Hostname: ", func_name);
+                    m_info(m_sessions[0].get_hostname().c_str(), func_name);
+                }
+                m_info("Attempting to remove session with host: ", func_name);
+                m_info(host, func_name);
+                removeSession(host);
+                m_info("Session removed", func_name);
+            } else {
+                // Handle the case where there are no sessions
+                m_warn("Attempted to access hostname from an empty session list", __func__);
+            }
             m_sessions.erase(m_sessions.begin());
+        }
+        m_info("Adding new session to session list", func_name);
+        m_info("Free RAM before session creation: ", func_name);
+        m_info(freeMemory(), func_name);
         SSLSession session(host);
+        m_info("SSLSession created", func_name);
+        m_info("Checking hostname: ", func_name);
+        m_info(session.get_hostname().c_str(), func_name);
         br_ssl_engine_get_session_parameters(&m_sslctx.eng, session.to_br_session());
+        m_info("Free RAM after session creation: ", func_name);
+        m_info(freeMemory(), func_name);
+        m_info("Session added to list", func_name);
         m_sessions.push_back(session);
+        m_info("m_sessions pushed back", func_name);
     }
     return 1;
 }
@@ -382,6 +453,7 @@ int SSLClient::m_run_until(const unsigned target) {
     unsigned lastState = 0;
     size_t lastLen = 0;
     const unsigned long start = millis();
+    // m_info("Start of m_run_until", func_name);
     for (;;) {
         unsigned state = m_update_engine();
 	    // error check
@@ -405,8 +477,10 @@ int SSLClient::m_run_until(const unsigned target) {
         // debug
         if (state != lastState || lastState == 0) {
             lastState = state;
-            m_info("m_run changed state:", func_name);
-            m_print_br_state(state, DebugLevel::SSL_INFO);
+            // m_info("m_run changed state:", func_name);
+            // m_print_br_state(state, DebugLevel::SSL_INFO);
+            // m_info("Memory: ", func_name);
+            // m_info(freeMemory(), func_name);
         }
         if (state & BR_SSL_RECVREC) {
             size_t len;
@@ -419,7 +493,10 @@ int SSLClient::m_run_until(const unsigned target) {
         /*
 		 * If we reached our target, then we are finished.
 		 */
-		if (state & target || (target == 0 && state == 0)) return 0;
+		if (state & target || (target == 0 && state == 0)) {
+            // m_info("Reached target state", func_name);
+            return 0;
+        }
 
 		/*
 		 * If some application data must be read, and we did not
@@ -454,8 +531,14 @@ int SSLClient::m_run_until(const unsigned target) {
 		 * the buffered data to "make room" for a new incoming
 		 * record.
 		 */
-		if (state & BR_SSL_SENDAPP && target & BR_SSL_RECVAPP) br_ssl_engine_flush(&m_sslctx.eng, 0);
+        if (state & BR_SSL_SENDAPP && target & BR_SSL_RECVAPP) {
+            m_info("Flushing the buffer to make room for incoming data", func_name);
+            br_ssl_engine_flush(&m_sslctx.eng, 0);
+        }
     }
+    // m_info("End of m_run_until", func_name);
+    // m_info("In this function for: ", func_name);
+    // m_info(millis() - start, func_name);
 }
 
 /* see SSLClient.h*/
@@ -480,6 +563,19 @@ unsigned SSLClient::m_update_engine() {
             int wlen;
 
             buf = br_ssl_engine_sendrec_buf(&m_sslctx.eng, &len);
+
+            /* from commit ddb40459 */
+            // Serial.print("Payload: ");
+            // for (int i = 0; i < len; i++) {
+            //     if (buf[i] <= 0x0f) Serial.print("0x0");
+            //     else Serial.print("0x");
+            //     Serial.print(buf[i], HEX);
+            //     Serial.print(", ");
+            // }
+            // Serial.println();
+            // //delay(100);
+            /* end of commit */
+
             wlen = get_arduino_client().write(buf, len);
             get_arduino_client().flush();
             if (wlen <= 0) {
@@ -557,6 +653,30 @@ unsigned SSLClient::m_update_engine() {
             // do we have the record you're looking for?
             const auto avail = get_arduino_client().available();
             if (avail > 0) {
+                int mem = freeMemory();
+                m_info("Memory: ", func_name);
+                m_info(mem, func_name);
+                // check for a stack overflow
+                // if the stack overflows we basically have to crash, and
+                // hope the user is ok with that
+                // since all memory is garbage we can't trust the cpu to
+                // execute anything properly
+                if (mem > 32 * 1024) {
+                    // software reset
+                    m_error("Stack overflow1! Resetting...", func_name);
+                    // RESET();
+                }
+                // free memory check
+                // BearSSL takes up so much memory on the stack it tends
+                // to overflow if there isn't at least 8000 bytes available
+                // when it starts
+                if(mem < 8000) {
+                    m_warn("Low on memory! Decrease the number of sessions or the size of m_iobuf", func_name);
+                    // setWriteError(SSL_OUT_OF_MEMORY);
+                    // stop();
+                    // return 0;
+                }
+
                 // I suppose so!
                 int rlen = get_arduino_client().read(buf, avail < len ? avail : len);
                 if (rlen <= 0) {
@@ -591,12 +711,19 @@ unsigned SSLClient::m_update_engine() {
 /* see SSLClientImpl.h */
 int SSLClient::m_get_session_index(const char* host) const {
     const char* func_name = __func__;
-    if(host == nullptr) return -1;
+    if(host == nullptr) {
+        m_info("Host is nullptr!", func_name);
+        return -1;
+    }
     // search for a matching session with the IP
     for (uint8_t i = 0; i < getSessionCount(); i++) {
+        m_info("Session of index (i): ", func_name);
+        m_info(i, func_name);
+        m_info("Host (get_hostname): ", func_name);
+        m_info(m_sessions[i].get_hostname().c_str(), func_name);
         // if we're looking at a real session
-        if (m_sessions[i].get_hostname().equals(host)) {
-            m_info(m_sessions[i].get_hostname(), func_name);
+        if (m_sessions[i].get_hostname().length() > 0 && strcmp(m_sessions[i].get_hostname().c_str(), host) == 0) {
+            m_info("Found session get_hostname equal to host!", func_name);
             return i;
         }
     }
@@ -710,13 +837,13 @@ void SSLClient::m_print_br_state(const unsigned state, const DebugLevel level) c
     const char* func_name = __func__;
     if (level > m_debug) return;
     m_print_prefix(func_name, level);
-    m_info("State: ", func_name);
-    if(state == 0) Serial.println("    Invalid");
-    else if (state & BR_SSL_CLOSED) Serial.println("   Connection closed");
+    // m_info("State: ", func_name);
+    if(state == 0) Serial.println("State:    Invalid");
+    else if (state & BR_SSL_CLOSED) Serial.println("State:   Connection closed");
     else {
-        if (state & BR_SSL_SENDREC) Serial.println("   SENDREC");
-        if (state & BR_SSL_RECVREC) Serial.println("   RECVREC");
-        if (state & BR_SSL_SENDAPP) Serial.println("   SENDAPP");
-        if (state & BR_SSL_RECVAPP) Serial.println("   RECVAPP");
+        if (state & BR_SSL_SENDREC) Serial.println("State:   SENDREC");
+        if (state & BR_SSL_RECVREC) Serial.println("State:   RECVREC");
+        if (state & BR_SSL_SENDAPP) Serial.println("State:   SENDAPP");
+        if (state & BR_SSL_RECVAPP) Serial.println("State:   RECVAPP");
     }
 }

@@ -384,13 +384,14 @@ public:
      */
     void setVerificationTime(uint32_t days, uint32_t seconds);
 
+    /** Returns whether or not the engine is connected, without polling the client over SPI or other (as opposed to connected()) */
+    bool m_soft_connected(const char* func_name);
+
 private:
     /** @brief Returns an instance of m_client that is polymorphic and can be used by SSLClientImpl */
     Client& get_arduino_client() { return m_client; }
     const Client& get_arduino_client() const { return m_client; }
 
-    /** Returns whether or not the engine is connected, without polling the client over SPI or other (as opposed to connected()) */
-    bool m_soft_connected(const char* func_name);
     /** start the ssl engine on the connected client */
     int m_start_ssl(const char* host = nullptr, SSLSession* ssl_ses = nullptr);
     /** run the bearssl engine until a certain state */
