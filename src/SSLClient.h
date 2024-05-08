@@ -347,7 +347,7 @@ public:
      *
      *  @returns The SessionCache template parameter.
      */
-    size_t getSessionCount() const { return m_sessions.size(); }
+    size_t getSessionCount() const { return 1; }
 
     /** 
      * @brief Equivalent to SSLClient::connected() > 0
@@ -440,8 +440,8 @@ private:
     // create a reference the client
     Client& m_client;
     // also store an array of SSLSessions, so we can resume communication with multiple websites
-    std::vector<SSLSession> m_sessions;
-    // as well as the maximmum number of sessions we can store
+    SSLSession m_sessions;
+    // as well as the maximum number of sessions we can store
     const size_t m_max_sessions;
     // store the pin to fetch an RNG see from
     const int m_analog_pin;

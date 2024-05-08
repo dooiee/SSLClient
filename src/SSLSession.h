@@ -59,6 +59,11 @@ public:
     SSLSession(const char* hostname)
         : m_hostname(hostname) {}
 
+
+    void update_hostname(const char* new_hostname) {
+        m_hostname = new_hostname;
+    }
+
     /**
      * @brief Get the hostname string associated with this session
      * 

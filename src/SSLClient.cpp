@@ -47,7 +47,7 @@ SSLClient::SSLClient(   Client& client,
                         const size_t max_sessions,
                         const DebugLevel debug)
     : m_client(client) 
-    , m_sessions()
+    , m_sessions("")
     , m_max_sessions(max_sessions)
     , m_analog_pin(analog_pin)
     , m_debug(debug)
@@ -299,7 +299,7 @@ SSLSession* SSLClient::getSession(const char* host) {
     // return the pointed to value
     m_info("Using session index: ", func_name);
     m_info(temp_index, func_name);
-    return &(m_sessions[temp_index]);
+    return &(m_sessions);
 }
 
 /* see SSLClient.h */
@@ -309,7 +309,7 @@ void SSLClient::removeSession(const char* host) {
     if (temp_index >= 0) {
         m_info(" Deleted session ", func_name);
         m_info(temp_index, func_name);
-        m_sessions.erase(m_sessions.begin() + static_cast<size_t>(temp_index));
+        // m_sessions.erase(m_sessions.begin() + static_cast<size_t>(temp_index));
     } else {
         m_warn("No session found to delete", func_name);
     }
@@ -412,37 +412,36 @@ int SSLClient::m_start_ssl(const char* host, SSLSession* ssl_ses) {
         m_info(ssl_ses->get_hostname().c_str(), func_name);
     }
     else if (host != nullptr) {
-        if (m_sessions.size() >= m_max_sessions) {
-            m_warn("Session limit reached, removing oldest session", func_name);
-            // remove the oldest session
-            if (!m_sessions.empty()) {
-                if (m_sessions[0].get_hostname().length() > 0) {
-                    m_info("Hostname: ", func_name);
-                    m_info(m_sessions[0].get_hostname().c_str(), func_name);
-                }
-                m_info("Attempting to remove session with host: ", func_name);
-                m_info(host, func_name);
-                removeSession(host);
-                m_info("Session removed", func_name);
-            } else {
-                // Handle the case where there are no sessions
-                m_warn("Attempted to access hostname from an empty session list", __func__);
-            }
-            m_sessions.erase(m_sessions.begin());
-        }
+        // if (m_sessions.size() >= m_max_sessions) {
+        //     m_warn("Session limit reached, removing oldest session", func_name);
+        //     // remove the oldest session
+        //     if (!m_sessions.empty()) {
+        //         if (m_sessions[0].get_hostname().length() > 0) {
+        //             m_info("Hostname: ", func_name);
+        //             m_info(m_sessions[0].get_hostname().c_str(), func_name);
+        //         }
+        //         m_info("Attempting to remove session with host: ", func_name);
+        //         m_info(host, func_name);
+        //         removeSession(host);
+        //         m_info("Session removed", func_name);
+        //     } else {
+        //         // Handle the case where there are no sessions
+        //         m_warn("Attempted to access hostname from an empty session list", __func__);
+        //     }
+        //     m_sessions.erase(m_sessions.begin());
+        // }
         m_info("Adding new session to session list", func_name);
         m_info("Free RAM before session creation: ", func_name);
         m_info(freeMemory(), func_name);
-        SSLSession session(host);
+        // SSLSession session(host);
+        m_sessions.update_hostname(host);
         m_info("SSLSession created", func_name);
         m_info("Checking hostname: ", func_name);
-        m_info(session.get_hostname().c_str(), func_name);
-        br_ssl_engine_get_session_parameters(&m_sslctx.eng, session.to_br_session());
+        m_info(m_sessions.get_hostname().c_str(), func_name);
+        br_ssl_engine_get_session_parameters(&m_sslctx.eng, m_sessions.to_br_session());
         m_info("Free RAM after session creation: ", func_name);
         m_info(freeMemory(), func_name);
         m_info("Session added to list", func_name);
-        m_sessions.push_back(session);
-        m_info("m_sessions pushed back", func_name);
     }
     return 1;
 }
@@ -720,9 +719,9 @@ int SSLClient::m_get_session_index(const char* host) const {
         m_info("Session of index (i): ", func_name);
         m_info(i, func_name);
         m_info("Host (get_hostname): ", func_name);
-        m_info(m_sessions[i].get_hostname().c_str(), func_name);
+        m_info(m_sessions.get_hostname().c_str(), func_name);
         // if we're looking at a real session
-        if (m_sessions[i].get_hostname().length() > 0 && strcmp(m_sessions[i].get_hostname().c_str(), host) == 0) {
+        if (m_sessions.get_hostname().length() > 0 && strcmp(m_sessions.get_hostname().c_str(), host) == 0){
             m_info("Found session get_hostname equal to host!", func_name);
             return i;
         }

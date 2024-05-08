@@ -423,7 +423,8 @@ br_client_init_TLS12_only(br_ssl_client_context *cc,
 		// days since 1970 + days from 1970 to year 0
 		(UNIX_TIMESTAMP_UTC / SEC_PER_DAY) + 719528UL,
 		// seconds over start of day
-		UNIX_TIMESTAMP_UTC % SEC_PER_DAY);
+		UNIX_TIMESTAMP_UTC % SEC_PER_DAY
+		);
 
 	/*
 	 * Set suites and asymmetric crypto implementations. We use the
